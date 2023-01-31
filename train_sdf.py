@@ -164,7 +164,7 @@ def train_one_epoch(model, optimizer, train_loader, coords_loader, args, writer,
             with open(os.path.join(args.log_dir, 'log.txt'), 'a') as f:
                 print(f'[TRAIN] EPOCH: {current_epoch} ITER: {i}/{len(train_loader)} LOSS: {loss:.4f} '
                     f'MSE: {mse:.4f} PSNR: {psnr:.4f}', file=f)
-            # writer.add_scalar('train_loss', train_loss.item(), len(train_loader) * current_epoch + i)
+            writer.add_scalar('train_loss', loss.item(), len(train_loader) * current_epoch + i)
 
 
 def train_one_epoch_recursive(model, optimizer, train_loader, coords_loader, args, writer, current_epoch, device, pbar):
@@ -189,7 +189,7 @@ def train_one_epoch_recursive(model, optimizer, train_loader, coords_loader, arg
             with open(os.path.join(args.log_dir, 'log.txt'), 'a') as f:
                 print(f'[TRAIN] EPOCH: {current_epoch} ITER: {i}/{len(train_loader)} LOSS: {loss:.4f} '
                     f'MSE: {mse:.4f} PSNR: {psnr:.4f}', file=f)
-            # writer.add_scalar('train_loss', train_loss.item(), len(train_loader) * current_epoch + i)
+            writer.add_scalar('train_loss', loss.item(), len(train_loader) * current_epoch + i)
 
 def main(args):
     device = torch.device(f'cuda:{args.gpuid}' if torch.cuda.is_available() else 'cpu')
@@ -202,30 +202,27 @@ def main(args):
 
     # prepare data loader
     train_dataset = data.VolumeFolderDataset(root=os.path.join(args.data_dir))
-    print(len(train_dataset))
     train_loader = DataLoader(train_dataset, pin_memory=True, batch_size=args.batch_size, shuffle=True)
 
-    if args.coord_loop == 'recursive':
+    if args.inner_loop == 'recursive':
         lattice_dataset = data.LatticeDataset(train_dataset.volume_size)
         train_coords = DataLoader(lattice_dataset, pin_memory=True, batch_size=args.chunk_size, shuffle=True)
     else:
         train_coords = data.IterableLatticeDataset(train_dataset.volume_size, batch_size=args.chunk_size, shuffle=True)
 
     # build model and optimizer
-    # model = DictMLP(train_dataset.num_images, args, in_dim=2, out_dim=train_dataset.num_channels)
-    # model = DictSIREN(train_dataset.num_images, args, in_dim=2, out_dim=train_dataset.num_channels)
     if args.gate_type == 'codebook':
         gate_module = partial(models.CodebookEncoder, num_images=len(train_dataset), max_norm=1., norm_type=2.)
     elif args.gate_type == 'pointnet':
         raise NotImplementedError('PointNet not implemented yet.')
     model = models.INRMoE(args, in_dim=3, out_dim=train_dataset.num_channels, bias=True, gate_module=gate_module)
-
-    if args.mode == 'fit':
-        model.load_dict_from_checkpoint(torch.load(args.ckpt_path)['model'])
-        model.freeze_dict()
     model = model.to(device)
 
-    model_params = model.code_parameters() if args.mode == 'fit' else model.parameters()
+    # freeze dictionary
+    if args.finetune:
+        model.freeze_dict()
+
+    model_params = model.code_parameters() if args.finetune else model.parameters()
     optimizer = torch.optim.Adam(params=model_params, lr=args.lr, weight_decay=args.weight_decay)
 
     # load checkpoints
@@ -263,7 +260,7 @@ def main(args):
         pbar.update(len(train_loader) * start_epoch)
 
         for current_epoch in range(start_epoch, args.num_epochs+1):
-            if args.coord_loop == 'recursive':
+            if args.inner_loop == 'recursive':
                 train_one_epoch_recursive(model, optimizer, train_loader, train_coords, args, writer, current_epoch, device, pbar)
             else:
                 train_one_epoch(model, optimizer, train_loader, train_coords, args, writer, current_epoch, device, pbar)
@@ -285,10 +282,7 @@ if __name__ == '__main__':
     p.add_argument('--data_dir', type=str, required=True, help='root path for dataset')
     p.add_argument('--log_dir', type=str, required=True, help='directory path for logging')
     p.add_argument('--ckpt_path', type=str, default='', help='path to the reloaded checkpoint')
-    p.add_argument('--mode', type=str, required=True, choices=['train', 'fit'],
-                help='learning mode: training dictionary or fitting sparse coding')
     p.add_argument('--gpuid', type=int, default=0, help='cuda device number')
-    p.add_argument('--test_only', action='store_true', help='test only (without training)')
     p.add_argument('--restart', action='store_true', help='do not reload from checkpoints')
 
     # general training options
@@ -301,8 +295,10 @@ if __name__ == '__main__':
     p.add_argument('--loss_type', type=str, default='l2', help='loss type to minimize regression difference')
     p.add_argument('--loss_cv', type=float, default=0.01, help='coefficient for CV penality')
     p.add_argument('--loss_l1', type=float, default=0.01, help='coefficient for L1 sparsity')
-    p.add_argument('--coord_loop', type=str, default='recursive', choices=['random', 'recursive'],
+    p.add_argument('--inner_loop', type=str, default='recursive', choices=['random', 'recursive'],
                 help=' inner loop strategy for traversing coords batchs')
+    p.add_argument('--test_only', action='store_true', help='test only (without training)')
+    p.add_argument('--finetune', action='store_true', help='freeze the dictionary while training')
 
     # network architecture specific options
     p.add_argument('--num_layers', type=int, default=4, help='number of layers of network')

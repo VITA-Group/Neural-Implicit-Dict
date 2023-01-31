@@ -152,7 +152,7 @@ class OlivettiFaceDataset(torch.utils.data.Dataset):
 
 class CIFAR10Dataset(torch.utils.data.Dataset):
 
-    def __init__(self, root, split='train'):
+    def __init__(self, root, split='train', subset=-1):
         super().__init__()
 
         transforms = torchvision.transforms.Compose([
@@ -161,10 +161,9 @@ class CIFAR10Dataset(torch.utils.data.Dataset):
         ])
         self.images = torchvision.datasets.CIFAR10(root=root, train=(split == 'train'),
                 download=True, transform=transforms)
-        # dataset = torchvision.datasets.CIFAR10(root=root, train=(split == 'train'),
-        #         download=True, transform=transforms)
-        # subset = np.linspace(0, len(dataset)-1, 100, dtype=np.int64)
-        # self.images = torch.utils.data.Subset(dataset, subset)
+        if subset > 0:
+            subset_idx = np.linspace(0, len(self.images)-1, subset, dtype=np.int64)
+            self.images = torch.utils.data.Subset(self.images, subset_idx)
 
     @property
     def num_images(self):
@@ -186,7 +185,7 @@ class CIFAR10Dataset(torch.utils.data.Dataset):
         return self.images[idx][0], torch.tensor(idx, dtype=torch.int64)
 
 class CelebADataset(torch.utils.data.Dataset):
-    def __init__(self, root, split, subset=-1, downsampled_size=None):
+    def __init__(self, root, split, subset=-1, downsampled_size=None, patch_size=None):
         # SIZE (178 x 218)
         super().__init__()
         assert split in ['train', 'test', 'val']
@@ -198,6 +197,7 @@ class CelebADataset(torch.utils.data.Dataset):
         with open(os.path.join(root, 'list_eval_partition.txt'), newline='') as csvfile:
             rowreader = csv.reader(csvfile, delimiter=' ', quotechar='|')
             for row in rowreader:
+                # if split == 'train' and row[1] == '0':
                 if split == 'train' and row[1] == '0':
                     self.file_names.append(row[0])
                 elif split == 'val' and row[1] == '1':
@@ -210,11 +210,16 @@ class CelebADataset(torch.utils.data.Dataset):
         elif isinstance(subset, list):
             self.file_names = [self.file_names[i] for i in subset]
 
-        self.downsampled_size = downsampled_size
+        self.downsampled_size = downsampled_size if downsampled_size is not None else (178, 178)
+        self.patch_size = patch_size if patch_size is not None else self.downsampled_size
+
+    @property
+    def num_patches_per_img(self):
+        return (self.downsampled_size[0] // self.patch_size[0]) * (self.downsampled_size[1] // self.patch_size[1])
 
     @property
     def num_images(self):
-        return len(self.file_names)
+        return self.num_patches_per_img * len(self.file_names)
 
     @property
     def num_channels(self):
@@ -222,13 +227,19 @@ class CelebADataset(torch.utils.data.Dataset):
 
     @property
     def image_size(self):
-        return (178, 178) if self.downsampled_size is None else self.downsampled_size
+        return self.patch_size
+
+    @property
+    def full_image_size(self):
+        return self.downsampled_size
 
     def __len__(self):
         return self.num_images
 
     def __getitem__(self, idx):
-        path = os.path.join(self.img_dir, self.file_names[idx])
+        img_idx = idx // self.num_patches_per_img
+        patch_idx = idx % self.num_patches_per_img
+        path = os.path.join(self.img_dir, self.file_names[img_idx])
         assert os.path.exists(path), 'Index does not specify any images in the dataset'
         
         img = Image.open(path)
@@ -242,10 +253,17 @@ class CelebADataset(torch.utils.data.Dataset):
         bottom = (height + s) / 2
         img = img.crop((left, top, right, bottom))
 
-        if self.downsampled_size is not None:
+        if self.downsampled_size != img.size:
             img = img.resize(self.downsampled_size)
 
         img = np.asarray(img).astype(np.float32) / 255.
+
+        # crop patch size
+        if self.num_patches_per_img != 1:
+            num_patches_per_row = self.downsampled_size[0] // self.patch_size[0]  # width
+            row_idx, col_idx = patch_idx // num_patches_per_row, patch_idx % num_patches_per_row
+            y, x = row_idx * self.patch_size[1], col_idx * self.patch_size[0]
+            img = img[y:y+self.patch_size[1], x:x+self.patch_size[0]]
 
         return torch.from_numpy(img), torch.tensor(idx, dtype=torch.int64)
 
@@ -274,34 +292,6 @@ class ImageFolderDataset(torch.utils.data.Dataset):
             if img.ndim == 3:
                 img = img[..., None] # [N, H, W] -> [N, H, W, 1]
             self.images = torch.from_numpy(images) # [N, H, W, C]
-
-    @property
-    def num_images(self):
-        return self.images.shape[0]
-
-    @property
-    def num_channels(self):
-        return self.images.shape[-1]
-
-    @property
-    def image_size(self):
-        return tuple(self.images.shape[1:3])
-
-    def __len__(self):
-        return self.num_images
-
-    def __getitem__(self, idx):
-        return self.images[idx], torch.tensor(idx, dtype=torch.int64)
-
-class CTSheppDataset(torch.utils.data.Dataset):
-
-    def __init__(self, root, image_only=False):
-        super().__init__()
-
-        images = np.load(os.path.join(root, 'images.npy'))
-        if images.ndim == 3:
-            images = images[..., None] # [N, H, W] -> [N, H, W, 1]
-        self.images = torch.from_numpy(images) # [N, H, W, C]
 
     @property
     def num_images(self):

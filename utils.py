@@ -12,11 +12,8 @@ import lpips
 import numpy as np
 
 import scipy
-import plyfile
 import skimage.measure
 import time
-
-import pytorch3d
 
 def ask_input(hint, options=['yes', 'no']):
     choices = '[{}]'.format('/'.join(options))
@@ -105,10 +102,6 @@ def ssim(img1, img2, window_size = 11, size_average = True, format='NCHW'):
     
     return _ssim(img1, img2, window, window_size, channel, size_average)
 
-
-# def ssim(img1, img2, window_size = 11, size_average = True):
-#     return ssim_utils.ssim(img1, img2, window_size, size_average)
-
 lpips_alex = lpips.LPIPS(net='alex') # best forward scores
 lpips_vgg = lpips.LPIPS(net='vgg') # closer to "traditional" perceptual loss, when used for optimization
 
@@ -175,9 +168,6 @@ def create_mesh(
     end = time.time()
     print("sampling takes: %f" % (end - start))
 
-    # import mrc
-    # mrc.imsave(ply_filename + '.mrc', sdf_values.cpu().numpy())
-
     convert_sdf_samples_to_ply(
         sdf_values.data.cpu(),
         voxel_origin,
@@ -242,6 +232,7 @@ def convert_sdf_samples_to_ply(
         faces_building.append(((faces[i, :].tolist(),)))
     faces_tuple = np.array(faces_building, dtype=[("vertex_indices", "i4", (3,))])
 
+    import plyfile
     el_verts = plyfile.PlyElement.describe(verts_tuple, "vertex")
     el_faces = plyfile.PlyElement.describe(faces_tuple, "face")
 
@@ -324,19 +315,6 @@ def compute_pcd_distance(gt_points, pred_points, gt_normals, pred_normals):
         'hausdorff': max(gt_to_pred_hausdorff, pred_to_gt_hausdorff),
         'normal': (gt_to_pred_norm + pred_to_gt_norm) / 2.
     }
-
-def compute_pytorch3d_chamfer(pts_1, pts_2, norm_1, norm_2):
-    x = pts_1[None, ...]
-    y = pts_2[None, ...]
-
-    x_lens = torch.tensor([x.shape[1]], device=pts_1.shape)
-    y_lens = torch.tensor([y.shape[1]], device=pts_2.shape)
-
-    nx = norm_1[None, ...]
-    ny = norm_2[None, ...]
-
-    return pytorch3d.loss.chamfer_distance(x, y, x_lengths=x_lens, y_lengths=y_lens,
-        x_normals=nx, y_normals=ny)
 
 class LRScheduler:
 

@@ -419,48 +419,8 @@ def first_layer_sine_init(m):
             # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
             m.weight.uniform_(-1 / num_input, 1 / num_input)
 
-class INRDict(nn.Module):
-    def __init__(self, dict_size, args, in_dim=3, out_dim=1):
-        super().__init__()
-
-        self.in_dim, self.out_dim = in_dim, out_dim
-        self.code_dim = args.code_dim
-
-        self.siren = INRNet(args, out_features=self.code_dim, in_features=in_dim)
-
-        ## TO-DO restrict different norm of the code
-        # self.codebook = nn.Embedding(dict_size, out_dim*args.code_dim, max_norm=1., norm_type=1.0)
-        self.codebook = nn.Embedding(dict_size, out_dim*args.code_dim)
-
-    def code_parameters(self):
-        for name, param in self.named_parameters():
-            if name.startswith('codebook.'):
-                yield param
-
-    def freeze_dict(self):
-        for name, param in self.named_parameters():
-            if name.startswith('siren.'):
-                param.requires_grad_(False)
-
-    def load_dict_from_checkpoint(self, ckpt):
-        param_dict = self.state_dict()
-        for name, param in ckpt.items():
-            if name.startswith('siren.'):
-                param_dict[name] = param
-        self.load_state_dict(param_dict)
-
-    def get_dict(self, coords):
-        return self.siren(coords) # [N_coords, N_basis]
-
-    def forward(self, coords, model_ids):
-        N = coords.shape[0]
-        basis = self.siren(coords) # [N_coords, N_basis]
-        code = self.codebook(model_ids).reshape(-1, self.code_dim, self.out_dim) # [N_imgs, N_basis, out_dim]
-
-        y = torch.matmul(basis[None, ...], code) # [N_imgs, N_coords, out_dim]
-        y = torch.sigmoid(y)
-
-        return y, code
+########################
+# MoE modules
 
 class INRMoE(nn.Module):
 
@@ -704,6 +664,10 @@ def cv_squared_loss(x, eps=1e-10):
         return torch.Tensor([0], device=x.device)
     return x.float().var() / (x.float().mean()**2 + eps)
 
+
+########################
+# Router modules
+
 class SimpleConvImgEncoder(nn.Module):
 
     def __init__(self, input_size, hidden_dim, num_layers, output_size):
@@ -752,16 +716,6 @@ class LinearImgEncoder(nn.Module):
         x = model_input['imgs'].permute(0, 3, 1, 2)
         x = x.reshape(x.shape[0], -1)
         return x @ self.w
-
-# class CodebookImgEncoder(nn.Module):
-    
-#     def __init__(self, num_images, output_size):
-#         super().__init__()
-#         self.codebook = nn.Embedding(num_images, output_size)
-
-#     def forward(self, model_input):
-#         img_ids = model_input['img_ids']
-#         return self.codebook(img_ids) # [N_imgs, out_dim]
 
 class CodebookImgEncoder(nn.Module):
     

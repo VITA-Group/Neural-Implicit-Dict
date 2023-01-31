@@ -192,17 +192,18 @@ if __name__ == '__main__':
     p = configargparse.ArgumentParser()
 
     p.add_argument('--config', is_config_file=True, help='config file path')
-    p.add_argument('--dataset', type=str, default='shapenet', choices=['shapenet', 'pointcloud'], help='dataset type')
-    p.add_argument('--category', type=str, default='chair', help='subclass for shapenet')
-    p.add_argument('--model_id', type=int, default=0, help='model index in the shapenet')
-    # p.add_argument('--data_dir', type=str, required=True, help='root path for dataset')
-    p.add_argument('--shapenet_dir', type=str, help='root path for shapenet dataset')
-    p.add_argument('--r2n2_dir', type=str, help='root path for r2n2 dataset')
-    p.add_argument('--pointcloud_path', type=str, help='root path to point clouds')
     p.add_argument('--log_dir', type=str, required=True, help='directory path for logging')
     p.add_argument('--gpuid', type=int, default=0, help='cuda device number')
     p.add_argument('--test_only', action='store_true', help='test only (without training)')
     p.add_argument('--restart', action='store_true', help='do not reload from checkpoints')
+
+    # dataset options
+    p.add_argument('--dataset', type=str, default='shapenet', choices=['shapenet', 'pointcloud'], help='dataset type')
+    p.add_argument('--category', type=str, default='chair', help='subclass for shapenet')
+    p.add_argument('--model_id', type=int, default=0, help='model index in the shapenet')
+    p.add_argument('--shapenet_dir', type=str, help='root path for shapenet dataset')
+    p.add_argument('--r2n2_dir', type=str, help='root path for r2n2 dataset')
+    p.add_argument('--pointcloud_path', type=str, help='root path to point clouds')
 
     # general training options
     p.add_argument('--batch_size', type=int, default=1024, help='batch size of sampled points when training')

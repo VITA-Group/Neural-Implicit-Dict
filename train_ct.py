@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from models import INRMoE, INRNet, SimpleConvImgEncoder, LinearImgEncoder, \
+from models import INRMoE, INRNet, SimpleConvImgEncoder, \
     CodebookImgEncoder, ResConvImgEncoder, cv_squared_loss
 from data_2d import CTSheppDataset, CTSliceDataset, LatticeDataset
 
@@ -30,7 +30,6 @@ def render(model, render_loader, coords_loader, args, current_epoch, save_dir, d
         B, H, W, C = rgb.shape
         list_rgb = []
         list_mse = []
-        # list_gt = []
         for coords, i_sel in coords_loader:
             coords, i_sel = coords.to(device), i_sel.to(device)
             
@@ -193,7 +192,7 @@ def main(args):
     os.makedirs(args.log_dir, exist_ok=True)
 
     # prepare data loader
-    train_dataset = CTSheppDataset(root=args.data_dir, slices=[0])
+    train_dataset = CTSheppDataset(root=args.data_dir)
     test_dataset = train_dataset
     render_dataset = test_dataset
 
@@ -220,12 +219,12 @@ def main(args):
     else:
         raise NotImplementedError
 
-    model_params = model.code_parameters() if args.model_type == 'moe' else model.parameters()
-    optimizer = torch.optim.Adam(params=model_params, lr=args.lr, weight_decay=args.weight_decay)
-
-    if args.model_type == 'moe':
-        model.load_dict_from_checkpoint(torch.load(args.dict_path)['model'])
+    # freeze dictionary
+    if args.finetune:
         model.freeze_dict()
+
+    model_params = model.code_parameters() if args.finetune else model.parameters()
+    optimizer = torch.optim.Adam(params=model_params, lr=args.lr, weight_decay=args.weight_decay)
 
     # load checkpoints
     start_epoch = 0
@@ -296,17 +295,15 @@ if __name__ == '__main__':
     p = configargparse.ArgumentParser()
 
     p.add_argument('--config', is_config_file=True, help='config file path')
+    p.add_argument('--log_dir', type=str, required=True, help='directory path for logging')
+    p.add_argument('--ckpt_path', type=str, default='', help='path to load checkpoint')
+    p.add_argument('--gpuid', type=int, default=0, help='cuda device number')
+    p.add_argument('--restart', action='store_true', help='do not reload from checkpoints')
+
+    # dataset options
     p.add_argument('--dataset', type=str, default='shepp', choices=['shepp'], help='dataset type.')
     p.add_argument('--data_dir', type=str, required=True, help='root path for dataset')
     p.add_argument('--num_thetas', type=int, default=127, help='number of observation angles')
-    p.add_argument('--log_dir', type=str, required=True, help='directory path for logging')
-    p.add_argument('--ckpt_path', type=str, default='', help='path to load checkpoint')
-    p.add_argument('--dict_path', type=str, default='', help='path to the dictionary checkpoint')
-    p.add_argument('--model_type', type=str, required=True, choices=['moe', 'inr'],
-                help='learning mode: training dictionary or fitting sparse coding')
-    p.add_argument('--gpuid', type=int, default=0, help='cuda device number')
-    p.add_argument('--test_only', action='store_true', help='test only (without training)')
-    p.add_argument('--restart', action='store_true', help='do not reload from checkpoints')
 
     # general training options
     p.add_argument('--batch_size', type=int, default=64, help='batch size of images')
@@ -321,8 +318,12 @@ if __name__ == '__main__':
     p.add_argument('--l1_exp', type=float, default=1., help='base for expoential L1 sparsity')
     p.add_argument('--inner_loop', type=str, default='recursive', choices=['random', 'recursive'],
                 help=' inner loop strategy for traversing coords batchs')
+    p.add_argument('--test_only', action='store_true', help='test only (without training)')
+    p.add_argument('--finetune', action='store_true', help='freeze the dictionary while training')
 
     # network architecture specific options
+    p.add_argument('--model_type', type=str, required=True, choices=['moe', 'inr'],
+            help='learning mode: training dictionary or fitting sparse coding')
     p.add_argument('--num_layers', type=int, default=4, help='number of layers of network')
     p.add_argument('--hidden_dim', type=int, default=256, help='hidden dimension of network')
     p.add_argument('--num_topk', type=int, default=128, help='dimension of coding (num experts to be used)')

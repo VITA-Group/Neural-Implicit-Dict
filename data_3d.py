@@ -267,7 +267,7 @@ class R2N2Dataset(torch.utils.data.Dataset, ShapeNetDatasetBase):
         ShapeNetDatasetBase.__init__(self, on_surface_points, normalize, keep_aspect_ratio)
 
         split_path = get_r2n2_split_path(r2n2_dir, category, ensure=True)
-        dataset = pytorch3d.datasets.R2N2('train', shapenet_dir, r2n2_dir, split_path,
+        self.dataset = pytorch3d.datasets.R2N2('train', shapenet_dir, r2n2_dir, split_path,
             return_all_views=False, return_voxels=False, load_textures=False)
         if subsample is not None:
             if isinstance(subsample, list):

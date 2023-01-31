@@ -10,14 +10,15 @@ from functools import partial
 import numpy as np
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from models import INRMoE, SimpleConvImgEncoder, LinearImgEncoder, \
-    CodebookImgEncoder, ResConvImgEncoder, cv_squared_loss
+from models import INRMoE, SimpleConvImgEncoder, CodebookImgEncoder, ResConvImgEncoder, cv_squared_loss
 from data_2d import LatticeDataset, IterableLatticeDataset, YaleFaceDataset, \
-    OlivettiFaceDataset, CIFAR10Dataset, CelebADataset, CTSheppDataset, ImageFolderDataset
+    OlivettiFaceDataset, CIFAR10Dataset, CelebADataset, ImageFolderDataset
 import utils
+
 
 @torch.no_grad()
 def render(model, render_loader, coords_loader, args, current_epoch, save_dir, device):
@@ -30,7 +31,6 @@ def render(model, render_loader, coords_loader, args, current_epoch, save_dir, d
         rgb, img_ids = rgb.to(device), img_ids.to(device)
         B, H, W, C = rgb.shape
         list_rgb = []
-        list_mse = []
         for coords, i_sel in coords_loader:
             coords, i_sel = coords.to(device), i_sel.to(device)
             model_input = {
@@ -38,16 +38,19 @@ def render(model, render_loader, coords_loader, args, current_epoch, save_dir, d
                 'img_ids': img_ids,
                 'coords': coords
             }
-            y_gt = rgb.reshape(B, -1, C)[:, i_sel, :]
             model_output = model(model_input, topk_sparse=(not warmup))
             y_pred = model_output['preds']
             list_rgb.append(y_pred.cpu())
-            list_mse.append(torch.mean((y_pred - y_gt).reshape(B, -1) ** 2., -1))
 
-        mse = torch.cat(list_mse, 0)
-        psnr = -10. * torch.log10(mse)
+        N = render_loader.dataset.num_patches_per_img
+        orig_H, orig_W = render_loader.dataset.full_image_size
 
-        images = torch.cat(list_rgb, 1).reshape(B, H, W, C)
+        # we assume the batch_size = N x k
+        assert (B % N == 0), "Batch size should be a multiple of number of patches per image"
+
+        # merge patches
+        images = torch.cat(list_rgb, 1).reshape(B // N, N, H, W, C).permute([0, 4, 2, 3, 1]).reshape(B // N, -1, N) # [N, CxHxW, L]
+        images = F.fold(images, (orig_H, orig_W), kernel_size=(H, W), stride=(H, W)).permute([0, 2, 3, 1]) # [N, H, W, C]
         for img in images:
             img = np.clip(img.numpy() * 255, 0, 255).astype(np.uint8)
             imageio.imwrite(os.path.join(save_dir, f'test_{j:04d}.png'), img)
@@ -73,21 +76,34 @@ def evaluate(model, test_loader, coords_loader, args, current_epoch, device, pba
                 'coords': coords
             }
 
-            B, H, W, C = rgb.shape
-            y_gt = rgb.reshape(B, -1, C)[:, i_sel, :]
+            y_gt = rgb.reshape(rgb.shape[0], -1, rgb.shape[-1])[:, i_sel, :]
 
             model_output = model(model_input, topk_sparse=(not warmup))
             y_pred = model_output['preds']
+
             list_rgb.append(y_pred.cpu())
             list_gt.append(y_gt.cpu())
 
-        pred = torch.cat(list_rgb, 1).reshape(B, H, W, C)
-        gt = torch.cat(list_gt, 1).reshape(B, H, W, C)
+        B, C = rgb.shape[0], rgb.shape[-1]
+        H, W = test_loader.dataset.image_size
+        N = test_loader.dataset.num_patches_per_img
+        orig_H, orig_W = test_loader.dataset.full_image_size
 
-        mse = ((pred - gt) ** 2.).reshape(B, -1).mean(-1)
-        psnr = utils.psnr(pred, gt, format='NHWC')
-        ssim = utils.ssim(pred, gt, format='NHWC')
-        lpips  = utils.lpips(pred, gt, format='NHWC')
+        # we assume the batch_size = N x k
+        assert (B % N == 0), "Batch size should be a multiple of number of patches per image"
+
+        # Get unfolded patches
+        pred = torch.cat(list_rgb, 1).reshape(B // N, N, H, W, C).permute([0, 4, 2, 3, 1]).reshape(B // N, -1, N) # [N, CxHxW, L]
+        gt = torch.cat(list_gt, 1).reshape(B // N, N, H, W, C).permute([0, 4, 2, 3, 1]).reshape(B // N, -1, N) # [N, CxHxW, L]
+
+        # Merge patches
+        pred = F.fold(pred, (orig_H, orig_W), kernel_size=(H, W), stride=(H, W))
+        gt = F.fold(gt, (orig_H, orig_W), kernel_size=(H, W), stride=(H, W))
+
+        mse = ((pred - gt) ** 2.).reshape(pred.shape[0], -1).mean(-1)
+        psnr = utils.psnr(pred, gt, format='NCHW')
+        ssim = utils.ssim(pred, gt, format='NCHW', size_average=False)
+        lpips  = utils.lpips(pred, gt, format='NCHW')
 
         if pbar is not None:
             pbar.set_description(f'[TEST] EPOCH {current_epoch} ITER: {i}/{len(test_loader)} '
@@ -238,29 +254,22 @@ def main(args):
     os.makedirs(args.log_dir, exist_ok=True)
 
     # prepare data loader
-    dataset_split = 'train' if args.mode == 'train' else 'test'
     if args.dataset == 'yaleface':
-        train_dataset = YaleFaceDataset(root=args.data_dir, subclass='all', split=dataset_split)
+        train_dataset = YaleFaceDataset(root=args.data_dir, subclass='all', split='train')
         test_dataset = train_dataset
         render_dataset = test_dataset
     elif args.dataset == 'olivetti':
-        train_dataset = OlivettiFaceDataset(root=args.data_dir, split=dataset_split)
+        train_dataset = OlivettiFaceDataset(root=args.data_dir, split='train')
         test_dataset = train_dataset
         render_dataset = test_dataset
     elif args.dataset == 'cifar10':
-        train_dataset = CIFAR10Dataset(root=args.data_dir, split=dataset_split)
-        test_dataset = train_dataset
-        subset = np.linspace(0, len(test_dataset)-1, 100, dtype=np.int64)
-        render_dataset = torch.utils.data.Subset(test_dataset, subset)
+        train_dataset = CIFAR10Dataset(root=args.data_dir, split='train', subset=args.train_subset)
+        test_dataset = CIFAR10Dataset(root=args.data_dir, split='test', subset=args.test_subset)
+        render_dataset = CIFAR10Dataset(root=args.data_dir, split='test', subset=args.render_subset)
     elif args.dataset == 'celeba':
-        train_dataset = CelebADataset(root=args.data_dir, split=dataset_split, subset=100)
-        test_dataset = train_dataset
-        subset = np.linspace(0, len(test_dataset)-1, 100, dtype=np.int64)
-        render_dataset = torch.utils.data.Subset(test_dataset, subset)
-    elif args.dataset == 'shepp':
-        train_dataset = CTSheppDataset(root=args.data_dir, image_only=True)
-        test_dataset = train_dataset
-        render_dataset = test_dataset
+        train_dataset = CelebADataset(root=args.data_dir, split='train', subset=args.train_subset, downsampled_size=(128, 128), patch_size=(args.patch_size, args.patch_size))
+        test_dataset = CelebADataset(root=args.data_dir, split='test', subset=args.test_subset, downsampled_size=(128, 128), patch_size=(args.patch_size, args.patch_size))
+        render_dataset = CelebADataset(root=args.data_dir, split='test', subset=args.render_subset, downsampled_size=(128, 128), patch_size=(args.patch_size, args.patch_size))
     elif args.dataset == 'imagefolder':
         train_dataset = ImageFolderDataset(root=os.path.join(args.data_dir, 'train'))
         test_dataset = ImageFolderDataset(root=os.path.join(args.data_dir, 'test'))
@@ -289,15 +298,12 @@ def main(args):
     model = INRMoE(args, in_dim=2, out_dim=train_dataset.num_channels, bias=True, gate_module=gate_module)
     model = model.to(device)
 
-    print(f'# Params: {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-    print(f'# FLOPs: {model.flops * train_dataset.image_size[0] * train_dataset.image_size[1]}')
-
-    model_params = model.code_parameters() if args.mode == 'fit' else model.parameters()
-    optimizer = torch.optim.Adam(params=model_params, lr=args.lr, weight_decay=args.weight_decay)
-
-    if args.mode == 'fit':
-        model.load_dict_from_checkpoint(torch.load(args.dict_path)['model'])
+    # freeze dictionary
+    if args.finetune:
         model.freeze_dict()
+
+    model_params = model.code_parameters() if args.finetune else model.parameters()
+    optimizer = torch.optim.Adam(params=model_params, lr=args.lr, weight_decay=args.weight_decay)
 
     # load checkpoints
     start_epoch = 0
@@ -345,7 +351,7 @@ def main(args):
             else:
                 train_one_epoch(model, optimizer, train_loader, train_coords, args, writer, current_epoch, device, pbar)
 
-            if current_epoch % args.epochs_til_eval == 0:
+            if current_epoch > 0 and current_epoch % args.epochs_til_eval == 0:
                 pbar.set_description('Evaluating ...')
                 pbar.refresh()
                 mse, psnr, ssim, lpips = evaluate(model, val_loader, val_coords, args, current_epoch, device, pbar)
@@ -353,14 +359,14 @@ def main(args):
                     print(f'[TEST] EPOCH {current_epoch} MSE: {mse:.4f} PSNR: {psnr:.4f} '
                         f'SSIM: {ssim:.4f} LPIPS: {lpips:.4f}', file=f)
 
-            if current_epoch % args.epochs_til_render == 0:
+            if current_epoch > 0 and current_epoch % args.epochs_til_render == 0:
                 pbar.set_description('Rendering ...')
                 pbar.refresh()
                 save_dir = os.path.join(args.log_dir, f'render_{current_epoch:04d}')
                 os.makedirs(save_dir, exist_ok=True)
                 render(model, render_loader, val_coords, args, current_epoch, save_dir, device)
 
-            if current_epoch % args.epochs_til_ckpt == 0:
+            if current_epoch > 0 and current_epoch % args.epochs_til_ckpt == 0:
                 pbar.set_description('Checkpointing ...')
                 pbar.refresh()
                 save_dict = {
@@ -374,18 +380,19 @@ if __name__ == '__main__':
     p = configargparse.ArgumentParser()
 
     p.add_argument('--config', is_config_file=True, help='config file path')
-    p.add_argument('--dataset', type=str, default='yaleface', choices=['yaleface', 'olivetti', 'cifar10', 'celeba', 'shepp', 'imagefolder'],
-                help='dataset type: yaleface, olivetti, or cifar10')
-    p.add_argument('--data_dir', type=str, required=True, help='root path for dataset')
-    p.add_argument('--data_subet', type=int, default=-1, help='subsample rate of dataset')
     p.add_argument('--log_dir', type=str, required=True, help='directory path for logging')
     p.add_argument('--ckpt_path', type=str, default='', help='path to load checkpoint')
-    p.add_argument('--dict_path', type=str, default='', help='path to the dictionary checkpoint')
-    p.add_argument('--mode', type=str, required=True, choices=['train', 'fit'],
-                help='learning mode: training dictionary or fitting sparse coding')
     p.add_argument('--gpuid', type=int, default=0, help='cuda device number')
-    p.add_argument('--test_only', action='store_true', help='test only (without training)')
     p.add_argument('--restart', action='store_true', help='do not reload from checkpoints')
+
+    # dataset options
+    p.add_argument('--dataset', type=str, default='yaleface', choices=['yaleface', 'olivetti', 'cifar10', 'celeba', 'imagefolder'],
+            help='dataset type: yaleface, olivetti, or cifar10')
+    p.add_argument('--data_dir', type=str, required=True, help='root path for dataset')
+    p.add_argument('--train_subset', type=int, default=500, help='subsample rate of training dataset')
+    p.add_argument('--test_subset', type=int, default=500, help='subsample rate of testing dataset')
+    p.add_argument('--render_subset', type=int, default=100, help='subsample rate of rendering dataset')
+    p.add_argument('--patch_size', type=int, default=16, help='patch size to crop datasets')
 
     # general training options
     p.add_argument('--batch_size', type=int, default=64, help='batch size of images')
@@ -400,6 +407,8 @@ if __name__ == '__main__':
     p.add_argument('--l1_exp', type=float, default=1., help='base for expoential L1 sparsity')
     p.add_argument('--inner_loop', type=str, default='recursive', choices=['random', 'recursive'],
                 help=' inner loop strategy for traversing coords batchs')
+    p.add_argument('--test_only', action='store_true', help='test only (without training)')
+    p.add_argument('--finetune', action='store_true', help='freeze the dictionary while training')
 
     # network architecture specific options
     p.add_argument('--num_layers', type=int, default=4, help='number of layers of network')

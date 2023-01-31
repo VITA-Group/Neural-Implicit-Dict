@@ -2,11 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-The official implementation of ICML 2022 paper "Neural Implicit Dictionary Learning via Mixture-of-Expert Training".
+The official implementation of ICML 2022 paper "[Neural Implicit Dictionary Learning via Mixture-of-Expert Training](https://arxiv.org/abs/2207.03691)".
 
 Peihao Wang, Zhiwen Fan, Tianlong Chen, Zhangyang (Atlas) Wang
-
-(Code under development)
 
 ## Introduction
 
@@ -36,13 +34,13 @@ configargparse
 scipy
 matplotlib
 tqdm
-mrc
 lpips
 ```
 To enable 3D data loading and visualization, please install the following packages:
 ```
 pytorch3d
 open3d
+plyfile
 trimesh
 ```
 
@@ -56,14 +54,17 @@ To run our code, you need to download [CelebA](https://mmlab.ie.cuhk.edu.hk/proj
 
 First of all, train a dictionary on the training set of one specified dataset:
 ```
-python train_image.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --mode train
+python train_images.py --config <config_path> --data_dir <path_to_data> --gpuid <gpu_id> --log_dir <log_dir>
 ```
-where `<config_path>` specifies the path to the configuration files.
+where `<config_path>` specifies the path to the configuration files. We provide an example in `configs/celeba_train.txt`.
 
-The second step is to fit coefficients for the evaluation set:
+To finetune coefficients on the evaluation set, one can add a flag `--finetune`:
 ```
-python train_image.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --mode fit
+python train_images.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --finetune
 ```
+
+We experiment on CelebA dataset, which can be downloaded from [Large-scale CelebFaces Attributes (CelebA) Dataset](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html).
+A pre-trained checkpoint on CelebA can be downloaded from [Google Drive](https://drive.google.com/file/d/1i_xQMREpmc1kNJn0NvENLMubGJcuMcaa/view?usp=share_link).
 
 ### Facial Image Inpainting
 
@@ -72,37 +73,38 @@ To generate corrupted images, user can use scripts:
 python scripts/preprocess_face.py --data_dir <path_to_data>  --dataset <data_type>  --out_dir <path_to_save> <perturb_params>
 ```
 
-Afterward, with the trained dictionary, one can directly fit the corrupted images using:
+Afterward, with the pre-trained dictionary, one can recover the corrupted images by finetune on the corrupted images with L1 loss function:
 ```
-python image/train_image.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --mode fit --loss_type l1
+python train_images.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --loss_type l1  --finetune
 ```
 
 ### Robust PCA on Video
 
-To train a dictionary on video clips, one needs to first convert frames to invidual images and save them under a folder. Then train the dictionary with the modified regularization:
+To train a dictionary on video clips, one needs to first convert frames to invidual images and save them under a folder `<path_to_data>`. Then train the dictionary with the modified regularization:
 ```
-python image/train_image.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --mode train
-    --loss_type l1 --l1_exp 0.5 --loss_l1 0.01 --loss_cv 0.0
+python train_image.py --config <config_path> --data_dir <path_to_data> --gpuid <gpu_id> --log_dir <log_dir> --loss_type l1 --l1_exp 0.5 --loss_l1 0.01 --loss_cv 0.0
 ```
 
 ### Computed Tomography (CT)
 
 Similar to image regression, one needs to first train a dictionary on Shepp-Logan phantoms dataset, and then fit on new measurements.
 ```
-python train_ct.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --num_thetas <num_views> --mode train
+python train_ct.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --num_thetas <num_views>
 ```
 It is recommended to use dense view to pre-train the dictionary. When testing on new CT images, we can reconstruct CT through few views.
 ```
-python train_ct.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --num_thetas <num_views> --mode fit
+python train_ct.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --num_thetas <num_views> --finetune
 ```
 
 ### Signed Distance Function
 
-To train SDF, one needs first process dataset using `convert_mesh_to_sdf.py`, which pre-compute the signed distance values for each instance. Then run the following command to train dictionary or fit coefficients:
+To train SDF, one needs first process dataset using `convert_mesh_to_sdf.py`, which pre-compute the signed distance values for each instance. Then run the following command to train dictionary (or fit coefficients with flag `--finetune`):
 
 ```
-python train_sdf.py --config <config_path> --gpuid <gpu_id> --log_dir <log_dir> --mode <mode>
+python train_sdf.py --config <config_path> --data_dir <path_to_data> --gpuid <gpu_id> --log_dir <log_dir>
 ```
+
+We experiment on ShapeNet dataset. To prepare the data, please follow [ShapeNet](https://shapenet.org/) to download the raw data and [R2N2](http://3d-r2n2.stanford.edu/) to acquire the data split.
 
 ## Citation
 
