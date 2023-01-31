@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-The official implementation of ICML 2022 paper "[Neural Implicit Dictionary Learning via Mixture-of-Expert Training](https://arxiv.org/abs/2207.03691)".
+The official implementation of ICML 2022 paper [Neural Implicit Dictionary Learning via Mixture-of-Expert Training](https://arxiv.org/abs/2207.03691).
 
 Peihao Wang, Zhiwen Fan, Tianlong Chen, Zhangyang (Atlas) Wang
 
@@ -111,9 +111,9 @@ We experiment on ShapeNet dataset. To prepare the data, please follow [ShapeNet]
 If you find this work or our code implementation helpful for your own resarch or work, please cite our paper.
 ```
 @inproceedings{wang2022inrdict,
-title={Neural Implicit Dictionary via Mixture-of-Expert Training},
-author={Wang, Peihao and Fan, Zhiwen and Chen, Tianlong and Wang, Zhangyang},
-booktitle={International Conference on Machine Learning},
-year={2022},
+  title={Neural Implicit Dictionary via Mixture-of-Expert Training},
+  author={Wang, Peihao and Fan, Zhiwen and Chen, Tianlong and Wang, Zhangyang},
+  booktitle={International Conference on Machine Learning},
+  year={2022}
 }
 ```
