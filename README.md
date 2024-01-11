@@ -64,7 +64,7 @@ python train_images.py --config <config_path> --gpuid <gpu_id> --log_dir <log_di
 ```
 
 We experiment on CelebA dataset, which can be downloaded from [Large-scale CelebFaces Attributes (CelebA) Dataset](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html).
-A pre-trained checkpoint on CelebA can be downloaded from [Google Drive](https://drive.google.com/file/d/1i_xQMREpmc1kNJn0NvENLMubGJcuMcaa/view?usp=share_link).
+A pre-trained checkpoint on CelebA can be downloaded from [HuggingFace Hub](https://huggingface.co/peihaowang/neural-implicit-dict).
 
 ### Facial Image Inpainting
 
